@@ -1,0 +1,211 @@
+---
+title: "Practical Machine Learning Course Project - Human Activity Recognition"
+author: "William Lai"
+date: "14 March 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## 1. Introduction
+
+In this report, we will use the Human Activity Recognition (HAR) dataset to train the prediction model and select the best model to predict activity class of 20 different test cases.
+
+The HAR dataset contains data from accelerometers on the belt, forearm, arm and dumbell of 6 participants. These data could be used to quantified self movement. Participants are asked to perform barbell lifts correctly and incorrectly in 5 different ways. 
+
+HAR Dataset Description: http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har
+
+## 2. Preparation
+
+### 2.1 Environment
+
+```{r, message = FALSE, warning = FALSE}
+library(rattle)
+library(lattice)
+library(ggplot2)
+
+library(caret)
+library(rpart)
+library(gbm)
+library(randomForest)
+
+## Improve random forest performance as suggested
+library(parallel)
+library(doParallel)
+
+cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+```
+
+### 2.2 Data Loading
+
+The data is loaded directly from the website:
+
+```{r, cache=TRUE}
+harTrain <- read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv")
+harTest <- read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv")
+```
+
+```{r}
+dim(harTrain)
+dim(harTest)
+
+setdiff(names(harTrain), names(harTest))
+setdiff(names(harTest), names(harTrain))
+```
+
+Both data contains same number of columns and the only different is that the training data contains the `r setdiff(names(harTrain), names(harTest))` column (actual result) while the testing data contains the `r setdiff(names(harTest), names(harTrain))` column (test case ID).
+
+### 2.3 Data Cleansing
+
+We will remove those predictors that are near zero variance or contain N/A value. They will not be considered as predictors in our prediction.
+
+```{r}
+nzv <- nearZeroVar(harTrain)
+harTrain <- harTrain[, -nzv] 
+harTest <- harTest[, -nzv] 
+
+notNa <- colSums(is.na(harTrain)) == 0
+harTrain <- harTrain[, notNa] 
+harTest <- harTest[, notNa]
+```
+
+In addition, the timestamp and window columns are not considered as predictors since they are only the occasion that the test taken.
+
+```{r}
+harTrain <- harTrain[, !grepl("^X|timestamp|window", names(harTrain))]
+harTest <- harTest[, !grepl("^X|timestamp|window", names(harTest))]
+```
+
+The final set of columns used in training is as follow:
+
+```{r}
+names(harTrain)
+```
+
+## 3. Training
+
+### 3.1 Training Data Partition
+
+In order to cross-validate the performance of different prediction models, We will split the training data set into 2 sets, training and probe, using random sub-sampling:
+
+```{r}
+inTrain <- createDataPartition(harTrain$classe, p = 0.70, list = F)
+training <- harTrain[inTrain, ]
+probe <- harTrain[-inTrain, ]
+```
+
+### 3.2 Prediction Method Training
+
+We have selected decision tree, random forest and boosting and compare the performance against our dataset. We will first use the training data set to train the models.
+
+```{r}
+fitControl <- trainControl(method = "cv", number = 5, allowParallel = TRUE)
+```
+
+#### 3.2.1 Decision Tree
+
+```{r rpartFit, cache=TRUE}
+registerDoParallel(cluster)
+
+set.seed(88888)
+dtFit <- train(classe ~ ., data = training, method = "rpart", trControl = fitControl)
+
+registerDoSEQ()
+```
+
+```{r rpartResult}
+fancyRpartPlot(dtFit$finalModel)
+```
+
+#### 3.2.2 Random Forest
+
+```{r rfFit, cache=TRUE}
+registerDoParallel(cluster)
+
+set.seed(88888)
+rfFit <- train(classe ~ ., data = training, method = "rf", trControl = fitControl, importance = TRUE)
+stopCluster(cluster)
+
+registerDoSEQ()
+```
+
+```{r rfFitResult}
+plot(rfFit$finalModel)
+```
+
+#### 3.2.3 Boosting
+
+```{r gbmFit, cache=TRUE}
+registerDoParallel(cluster)
+
+set.seed(88888)
+btFit <- train(classe ~ ., data = training, method = "gbm", trControl = fitControl, verbose = FALSE)
+stopCluster(cluster)
+
+registerDoSEQ()
+```
+
+```{r gbmFitResult}
+plot(btFit)
+```
+
+### 3.3 Cross Validation
+
+We will then perform the cross validation using the probe dataset.
+
+```{r}
+dtCv <- predict(dtFit, newdata = probe)
+dtCm <- confusionMatrix(probe$classe, dtCv)
+
+rfCv <- predict(rfFit, newdata = probe)
+rfCm <- confusionMatrix(probe$classe, rfCv)
+
+btCv <- predict(btFit, newdata = probe)
+btCm <- confusionMatrix(probe$classe, btCv)
+```
+
+| Model | Accuracy | Out of Sample Error |
+|---|---:|---:|
+| Decision Tree | `r dtCm$overall[1]` | `r 1 - dtCm$overall[1]` | 
+| Random Forest | `r rfCm$overall[1]` | `r 1 - rfCm$overall[1]` | 
+| Boosting | `r btCm$overall[1]` | `r 1 - btCm$overall[1]` | 
+
+From the above data, both random forest and boosting models out-perform the decision tree model. Random forest is slightly more accurate than boosting. As a result, we will use random forest as our prediction model.
+
+The confusion matrix of random forest model is as below:
+
+```{r}
+rfCm$table
+```
+
+The random forest model has identified number of predictors:
+
+```{r}
+varImp(rfFit)
+```
+
+## 4. Prediction
+
+Since we have chosen random forest as our prediction model, we will feed the testing dataset and generate the prediction result of 20 different test cases.
+
+```{r}
+predict <- predict(rfFit, newdata = harTest)
+
+data.frame(
+  problem_id = harTest$problem_id,
+  predict_classe = predict
+)
+```
+
+## 5. Conclusion
+
+We have compared 3 prediction models for the HAR data set. We have selected to use random forest for the testing data prediction due to it high accuracy (`r rfCm$overall[1]`). The prediction result of 20 different test cases are then generated using this model which could be found in the prediction section.
+
+## Appendix
+
+```{r}
+sessionInfo()
+```
+
