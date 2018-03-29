@@ -1,0 +1,77 @@
+---
+title: "Map of City Population (Developing Data Products - R Markdown and Leaflet Assignment)"
+author: "William Lai"
+date: "28 March 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+In this report, we are going to show the cities population in the world map using R mark down and leaflet package. 
+
+The data in map.cities dataset in R maps package is plotted to the map. The map.cities dataset contains the longitude and latitude of the cities and their population.
+
+```{r, message = FALSE, warning = FALSE}
+library(maps)
+library(dplyr)
+library(leaflet)
+library(RColorBrewer)
+
+data(world.cities)
+```
+
+These are the first few lines of the dataset.
+
+```{r}
+head(world.cities)
+```
+
+The dataset contains information of `r nrow(world.cities)` cities.
+
+```{r}
+dim(world.cities)
+```
+
+## Map of City Population
+
+Due to the large amount of city information in the dataset, we will only show those city with more than 1 million population.
+
+```{r}
+world.cities <- world.cities %>% 
+  filter(pop >= 1000000) %>%
+  mutate(popup = paste(name, format(pop, big.mark = ","), sep = ": ")) %>%
+  mutate(capital = ifelse(capital %in% c(2, 3), 0, capital)) %>%
+  mutate(capital = as.factor(capital))
+```
+
+The size of population is shown by the size of the circle. We have also highlighted the capital with different color.
+
+```{r, fig.cap = "Population of City", fig.align='center'}
+color <- c("blue", "red")
+
+pal <- colorFactor(
+  palette = color,
+  domain = world.cities$capital
+)
+
+world.cities %>% 
+  leaflet() %>%
+  addTiles() %>%
+  addCircles(lng = ~long, lat = ~lat, radius = ~sqrt(pop) * 20, popup = ~popup, color = ~pal(capital)) %>%
+  addLegend("bottomright", 
+            colors = color,
+            labels = c("Non-Capital", "Capital"),
+            opacity = 1)
+```
+
+We have a surprisingly observation that most of the big cities in Europe and Africa are capital but not in other part of the world. It may due to number of factors like country size, GDP, etc. More data and research must be performed in order to find out the affecting factors for this pattern.
+
+## Appendix
+
+```{r}
+sessionInfo()
+```
